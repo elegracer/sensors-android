@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">sensors-android</string>
+    <string name="hello_blank_fragment">Hello blank fragment</string>
+    <string name="record">Record</string>
+    <string name="permission_request">This app requires permission for camera</string>
+    <string name="camera_error">This device doesn\'t support Camera2 API</string>
+    <string name="stop">Stop</string>
+</resources>
