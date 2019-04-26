@@ -89,7 +89,7 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
         }
     }
     private var nextDatasetAbsolutePath: String? = null
-    private var outputStream: OutputStream? = null
+    private var outputStream: FileOutputStream? = null
     private var imageReader: ImageReader? = null
     private var sensorManager: SensorManager? = null
     private var accelerometer: Sensor? = null
@@ -264,25 +264,14 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
                 setDefaultBufferSize(640, 480)
             }
 
-            val sensorActivity = activity
-            if (sensorActivity == null || sensorActivity.isFinishing) return
-
-            sensorManager = sensorActivity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            accelerometer = sensorManager!!.getDefaultSensor(Sensor.TYPE_ACCELEROMETER_UNCALIBRATED)
-            gyroscope = sensorManager!!.getDefaultSensor(Sensor.TYPE_GYROSCOPE_UNCALIBRATED)
-            gravity = sensorManager!!.getDefaultSensor(Sensor.TYPE_GRAVITY)
-            sensorManager!!.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST, backgroundHandler)
-            sensorManager!!.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_FASTEST, backgroundHandler)
-            sensorManager!!.registerListener(this, gravity, SensorManager.SENSOR_DELAY_FASTEST, backgroundHandler)
-
-
             val previewSurface = Surface(texture)
             imageReader = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 5)
             imageReader!!.setOnImageAvailableListener({
                 val img = it.acquireLatestImage()
                 if (img != null) {
                     val time = img.timestamp
-                    Log.e("sensors-android", "img delta t: " + (time - lastImageTimestamp) + " " + imageBuffer.position().toString())
+//                    Log.e("sensors-android", "image lag t: " + (SystemClock.elapsedRealtimeNanos() - time).toString())
+//                    Log.e("sensors-android", "img delta t: " + (time - lastImageTimestamp) + " " + imageBuffer.position().toString())
                     val buffer = img.planes[0].buffer.order(ByteOrder.LITTLE_ENDIAN)
                     imageBuffer.rewind()
                     imageBuffer.put(0x00)
@@ -320,6 +309,18 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
                     }
                 }
             }, backgroundHandler)
+
+
+            val sensorActivity = activity
+            if (sensorActivity == null || sensorActivity.isFinishing) return
+
+            sensorManager = sensorActivity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            accelerometer = sensorManager!!.getDefaultSensor(Sensor.TYPE_ACCELEROMETER_UNCALIBRATED)
+            gyroscope = sensorManager!!.getDefaultSensor(Sensor.TYPE_GYROSCOPE_UNCALIBRATED)
+            gravity = sensorManager!!.getDefaultSensor(Sensor.TYPE_GRAVITY)
+            sensorManager!!.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST, backgroundHandler)
+            sensorManager!!.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_FASTEST, backgroundHandler)
+            sensorManager!!.registerListener(this, gravity, SensorManager.SENSOR_DELAY_FASTEST, backgroundHandler)
         } catch (e: CameraAccessException) {
             Log.e(TAG, e.toString())
         } catch (e: IOException) {
@@ -352,17 +353,17 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
         isRecordingVideo = false
         recordButton.setText(R.string.record)
 
-        outputStream?.flush()
-        outputStream?.close()
-        outputStream = null
-
-        imageReader = null
-
         sensorManager?.unregisterListener(this, gyroscope)
         sensorManager?.unregisterListener(this, accelerometer)
         sensorManager?.unregisterListener(this, gravity)
         sensorManager?.unregisterListener(this)
         sensorManager = null
+
+        imageReader = null
+
+        outputStream?.flush()
+        outputStream?.close()
+        outputStream = null
 
         if (activity != null) showToast("Video saved: $nextDatasetAbsolutePath")
         nextDatasetAbsolutePath = null
