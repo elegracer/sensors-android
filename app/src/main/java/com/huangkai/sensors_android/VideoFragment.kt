@@ -18,6 +18,7 @@ import android.media.*
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Message
 import android.support.v4.app.ActivityCompat
 import android.support.v4.app.Fragment
 import android.support.v4.app.FragmentActivity
@@ -32,7 +33,6 @@ import java.util.concurrent.Semaphore
 import kotlinx.android.synthetic.main.fragment_video.*
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.OutputStream
 import java.lang.NullPointerException
 import java.lang.RuntimeException
 import java.nio.ByteBuffer
@@ -65,6 +65,8 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
     private var isRecordingVideo = false
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
+    private var writerThread: HandlerThread? = null
+    private var writerHandler: Handler? = null
     private val cameraOpenCloseLock = Semaphore(1)
     private lateinit var previewRequestBuilder: CaptureRequest.Builder
     private val stateCallback = object : StateCallback() {
@@ -159,6 +161,16 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
         backgroundThread = HandlerThread("CameraBackground")
         backgroundThread?.start()
         backgroundHandler = Handler(backgroundThread?.looper)
+
+        writerThread = HandlerThread("WriterBackground")
+        writerThread?.start()
+        writerHandler = Handler(writerThread?.looper, object:Handler.Callback {
+            override fun handleMessage(msg: Message?): Boolean {
+                val buffer = msg?.obj as ByteBuffer
+                outputStream?.write(buffer.array())
+                return true
+            }
+        })
     }
 
     private fun stopBackgroundThread() {
@@ -167,6 +179,15 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
             backgroundThread?.join()
             backgroundThread = null
             backgroundHandler = null
+        } catch (e: InterruptedException) {
+            Log.e(TAG, e.toString())
+        }
+
+        writerThread?.quitSafely()
+        try {
+            writerThread?.join()
+            writerThread = null
+            writerHandler = null
         } catch (e: InterruptedException) {
             Log.e(TAG, e.toString())
         }
@@ -211,40 +232,60 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event != null) {
+//            Log.e("sensors-android", "imu lag t: " + (SystemClock.elapsedRealtimeNanos() - event.timestamp).toString())
             if (event.sensor.type == Sensor.TYPE_GYROSCOPE_UNCALIBRATED) {
                 val time = event.timestamp
-                Log.e("sensors-android", "gyr delta t: " + (time - lastGyroTimestamp))
+//                Log.e("sensors-android", "gyr delta t: " + (time - lastGyroTimestamp))
+
+                val message = Message()
+                message.obj = ByteBuffer.allocate(1 + 8 + 8 * 3).apply {
+                    order(ByteOrder.LITTLE_ENDIAN)
+                }
+                val gyroscopeBuffer = message.obj as ByteBuffer
                 gyroscopeBuffer.rewind()
                 gyroscopeBuffer.put(0x01)
                 gyroscopeBuffer.putDouble(time.toDouble() / 1e9)
                 gyroscopeBuffer.putDouble(event.values[0].toDouble())
                 gyroscopeBuffer.putDouble(event.values[1].toDouble())
                 gyroscopeBuffer.putDouble(event.values[2].toDouble())
-                outputStream?.write(gyroscopeBuffer.array())
+                writerHandler?.sendMessage(message)
+//                outputStream?.write(gyroscopeBuffer.array())
                 lastGyroTimestamp = time
             }
             if (event.sensor.type == Sensor.TYPE_ACCELEROMETER_UNCALIBRATED) {
                 val time = event.timestamp
-                Log.e("sensors-android", "acc delta t: " + (time - lastAccTimestamp))
+//                Log.e("sensors-android", "acc delta t: " + (time - lastAccTimestamp))
+                val message = Message()
+                message.obj = ByteBuffer.allocate(1 + 8 + 8 * 3).apply {
+                    order(ByteOrder.LITTLE_ENDIAN)
+                }
+                val acceleratorBuffer = message.obj as ByteBuffer
                 acceleratorBuffer.rewind()
                 acceleratorBuffer.put(0x02)
                 acceleratorBuffer.putDouble(time.toDouble() / 1e9)
                 acceleratorBuffer.putDouble(event.values[0].toDouble())
                 acceleratorBuffer.putDouble(event.values[1].toDouble())
                 acceleratorBuffer.putDouble(event.values[2].toDouble())
-                outputStream?.write(acceleratorBuffer.array())
+                writerHandler?.sendMessage(message)
+//                outputStream?.write(acceleratorBuffer.array())
                 lastAccTimestamp = time
             }
             if (event.sensor.type == Sensor.TYPE_GRAVITY) {
                 val time = event.timestamp
-                Log.e("sensors-android", "gra delta t: " + (time - lastGravityTimestamp))
+//                Log.e("sensors-android", "gra delta t: " + (time - lastGravityTimestamp))
+                val message = Message()
+                message.obj = ByteBuffer.allocate(1 + 8 + 8 * 3).apply {
+                    order(ByteOrder.LITTLE_ENDIAN)
+                }
+                val gravityBuffer = message.obj as ByteBuffer
                 gravityBuffer.rewind()
                 gravityBuffer.put(0x12)
                 gravityBuffer.putDouble(time.toDouble() / 1e9)
                 gravityBuffer.putDouble(event.values[0].toDouble())
                 gravityBuffer.putDouble(event.values[1].toDouble())
                 gravityBuffer.putDouble(event.values[2].toDouble())
-                outputStream?.write(gravityBuffer.array())
+                writerHandler?.sendMessage(message)
+//                outputStream?.write(gravityBuffer.array())
                 lastGravityTimestamp = time
             }
         }
@@ -267,11 +308,16 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
             val previewSurface = Surface(texture)
             imageReader = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 5)
             imageReader!!.setOnImageAvailableListener({
-                val img = it.acquireLatestImage()
+                val img = it.acquireNextImage()
                 if (img != null) {
                     val time = img.timestamp
 //                    Log.e("sensors-android", "image lag t: " + (SystemClock.elapsedRealtimeNanos() - time).toString())
 //                    Log.e("sensors-android", "img delta t: " + (time - lastImageTimestamp) + " " + imageBuffer.position().toString())
+                    val message = Message()
+                    message.obj = ByteBuffer.allocate(1 + 8 + 4 + 4 + 640 * 480).apply {
+                        order(ByteOrder.LITTLE_ENDIAN)
+                    }
+                    val imageBuffer = message.obj as ByteBuffer
                     val buffer = img.planes[0].buffer.order(ByteOrder.LITTLE_ENDIAN)
                     imageBuffer.rewind()
                     imageBuffer.put(0x00)
@@ -279,7 +325,8 @@ class VideoFragment : Fragment(), View.OnClickListener, ActivityCompat.OnRequest
                     imageBuffer.putInt(640)
                     imageBuffer.putInt(480)
                     imageBuffer.put(buffer)
-                    outputStream?.write(imageBuffer.array())
+                    writerHandler?.sendMessage(message)
+//                    outputStream?.write(imageBuffer.array())
                     lastImageTimestamp = time
                     img.close()
                 }
